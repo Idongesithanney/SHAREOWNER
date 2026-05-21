@@ -1,6 +1,7 @@
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { TrendingUp, ShieldCheck, Zap, Users, ArrowRight } from 'lucide-react';
+import { FAQ } from '../components/FAQ';
 
 export default function LandingPage() {
   return (
@@ -9,9 +10,8 @@ export default function LandingPage() {
       <nav className="fixed w-full z-50 bg-[#020617]/80 backdrop-blur-md border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
-            <div className="flex items-center space-x-2">
-              <TrendingUp className="h-8 w-8 text-amber-500" />
-              <span className="text-2xl font-bold text-white tracking-tight italic">SHAREOWNER<span className="text-amber-500 ml-1">LTD</span></span>
+            <div className="flex items-center">
+              <img src="/logo.png" alt="Shareowner Logo" className="h-10 sm:h-12 object-contain" />
             </div>
           <div className="flex items-center space-x-4">
             <a href="#" className="hidden sm:flex px-4 py-2 rounded-full border border-slate-600 text-sm font-medium hover:bg-slate-800 transition text-white">Join Telegram</a>
@@ -129,12 +129,14 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* FAQ */}
+      <FAQ />
+
       {/* Footer */}
       <footer className="h-16 bg-slate-950 border-t border-slate-900 flex items-center justify-center text-[10px] font-bold text-slate-500 uppercase tracking-widest px-6">
         <div className="max-w-7xl mx-auto w-full flex flex-col md:flex-row justify-between items-center">
-          <div className="flex items-center space-x-2 mb-2 md:mb-0">
-            <TrendingUp className="h-5 w-5 text-amber-500" />
-            <span className="text-sm font-black text-white italic">SHAREOWNER</span>
+          <div className="flex items-center mb-2 md:mb-0">
+            <img src="/logo.png" alt="Shareowner Logo" className="h-6 object-contain" />
           </div>
           <p>© {new Date().getFullYear()} Shareowner Ltd. <span className="hidden md:inline">Reg ID: SO/LTD/2026.</span></p>
         </div>

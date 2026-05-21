@@ -1,25 +1,36 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../App';
 import { formatNaira } from '../lib/utils';
-import { SystemStats, User, Transaction, ShareInvestment } from '../lib/db';
+import { SystemStats, User, Transaction, ShareInvestment } from '../lib/types';
 import { motion } from 'motion/react';
-import { ArrowLeft, PlayCircle, Users, Activity, Wallet, FileText } from 'lucide-react';
+import { ArrowLeft, PlayCircle, Users, Activity, Wallet, FileText, LogOut } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { db } from '../lib/firebase';
+import { collection, query, getDocs, doc, writeBatch, getDoc, serverTimestamp, increment } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
 export default function AdminDashboard() {
-  const { token, logout } = useAuth();
+  const { token, logout, user } = useAuth();
   const [data, setData] = useState<{users: User[], transactions: Transaction[], shares: ShareInvestment[], stats: SystemStats} | null>(null);
   const [loading, setLoading] = useState(true);
   const [simulating, setSimulating] = useState(false);
 
   const fetchAdminData = async () => {
+    if (!token || !user || user.role !== 'ADMIN') return;
     try {
-      const res = await fetch('/api/admin/stats', {
-        headers: { Authorization: `Bearer ${token}` }
+      const [usersSnap, txnsSnap, sharesSnap, statsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'users'))),
+        getDocs(query(collection(db, 'transactions'))),
+        getDocs(query(collection(db, 'shares'))),
+        getDoc(doc(db, 'stats', 'global'))
+      ]);
+
+      setData({
+        users: usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)),
+        transactions: txnsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)),
+        shares: sharesSnap.docs.map(d => ({ id: d.id, ...d.data() } as ShareInvestment)),
+        stats: statsSnap.exists() ? (statsSnap.data() as SystemStats) : { companyReserve: 0, totalTaxCollected: 0 }
       });
-      if (res.ok) {
-        setData(await res.json());
-      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -29,20 +40,63 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchAdminData();
-  }, []);
+  }, [user?.id, token]);
 
   const handleSimulateDay = async () => {
     if (!confirm('Run daily return cron simulation? This distributes ROI and deducts tax.')) return;
     setSimulating(true);
     try {
-      const res = await fetch('/api/admin/cron/simulate-day', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const result = await res.json();
-      alert(result.message || 'Simulation complete');
+      const batch = writeBatch(db);
+      const activeShares = data?.shares.filter(s => s.status === 'ACTIVE') || [];
+      let totalDistributed = 0;
+      let totalTax = 0;
+
+      for (const share of activeShares) {
+        if (share.daysRemaining > 0) {
+          const grossReturn = share.dailyIncome;
+          const tax = grossReturn * 0.04;
+          const netReturn = grossReturn - tax;
+
+          const userRef = doc(db, 'users', share.userId);
+          batch.update(userRef, {
+            balance: increment(netReturn),
+            totalEarnings: increment(netReturn)
+          });
+
+          const nextDaysRemaining = share.daysRemaining - 1;
+          const shareRef = doc(db, 'shares', share.id);
+          batch.update(shareRef, {
+            daysRemaining: nextDaysRemaining,
+            status: nextDaysRemaining === 0 ? 'MATURED' : 'ACTIVE'
+          });
+
+          totalDistributed += netReturn;
+          totalTax += tax;
+
+          const newTxnRef = doc(collection(db, 'transactions'));
+          batch.set(newTxnRef, {
+            userId: share.userId,
+            type: 'DAILY_RETURN',
+            amount: netReturn,
+            status: 'COMPLETED',
+            createdAt: serverTimestamp(),
+            memo: `Daily Return from ${share.sharesAmount} shares`
+          });
+        }
+      }
+
+      const statsRef = doc(db, 'stats', 'global');
+      batch.set(statsRef, {
+        totalTaxCollected: increment(totalTax),
+        companyReserve: increment(-totalDistributed)
+      }, { merge: true });
+
+      await batch.commit();
+
+      alert(`Simulated day: distributed ₦${totalDistributed}, collected ₦${totalTax} in tax.`);
       fetchAdminData();
     } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'cron_batch');
       alert('Error running simulation');
     } finally {
       setSimulating(false);
@@ -69,7 +123,13 @@ export default function AdminDashboard() {
               <PlayCircle className="h-5 w-5 mr-2" />
               {simulating ? 'Processing...' : 'Simulate 1 Day (Cron)'}
             </button>
-            <button onClick={logout} className="px-4 py-2 border border-slate-700 font-bold rounded-xl hover:bg-slate-900 transition">Logout</button>
+            <button 
+              onClick={logout} 
+              className="px-4 py-2 border border-red-500/30 text-red-400 font-bold rounded-xl hover:bg-red-500/10 transition flex items-center space-x-2 text-sm bg-red-500/5 shadow-lg active:scale-95"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Logout</span>
+            </button>
           </div>
         </div>
 
@@ -84,11 +144,11 @@ export default function AdminDashboard() {
           </div>
           <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-3xl">
             <div className="flex items-center text-emerald-400 mb-4 font-bold uppercase tracking-widest text-xs"><Wallet className="h-5 w-5 mr-2" /> Company Reserve</div>
-            <div className="text-4xl font-black tracking-tight text-white">{formatNaira(data?.stats.companyReserve || 0)}</div>
+            <div className="text-4xl font-black tracking-tight text-white">{formatNaira(data?.stats?.companyReserve || 0)}</div>
           </div>
           <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-3xl">
             <div className="flex items-center text-red-400 mb-4 font-bold uppercase tracking-widest text-xs"><FileText className="h-5 w-5 mr-2" /> Total Tax Collected</div>
-            <div className="text-4xl font-black tracking-tight text-white">{formatNaira(data?.stats.totalTaxCollected || 0)}</div>
+            <div className="text-4xl font-black tracking-tight text-white">{formatNaira(data?.stats?.totalTaxCollected || 0)}</div>
           </div>
         </div>
 
@@ -130,7 +190,7 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {data?.transactions.slice().sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8).map(t => (
+                  {data?.transactions.slice().sort((a,b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 8).map(t => (
                     <tr key={t.id}>
                       <td className="py-3">
                         <div className="font-medium text-white">{t.type}</div>

@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with wallet balance and referral information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["USER", "ADMIN"] },
+        "balance": { "type": "number" },
+        "totalEarnings": { "type": "number" },
+        "referralCode": { "type": "string" },
+        "referredBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED"] },
+        "bankName": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "accountName": { "type": "string" },
+        "bankLinked": { "type": "boolean" }
+      },
+      "required": ["name", "email", "role", "balance", "totalEarnings", "referralCode", "createdAt", "status"]
+    },
+    "ShareInvestment": {
+      "title": "Share Investment",
+      "description": "Active or Matured share investment",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "sharesAmount": { "type": "number" },
+        "investmentValue": { "type": "number" },
+        "dailyIncome": { "type": "number" },
+        "maturityValue": { "type": "number" },
+        "daysRemaining": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "MATURED"] }
+      },
+      "required": ["userId", "sharesAmount", "investmentValue", "dailyIncome", "maturityValue", "daysRemaining", "createdAt", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Ledger of deposits, withdrawals, returns, and bonuses",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["DEPOSIT", "WITHDRAWAL", "SHARE_PURCHASE", "DAILY_RETURN", "REFERRAL_BONUS", "TAX_DEDUCTION"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "COMPLETED", "FAILED"] },
+        "createdAt": { "type": "string" },
+        "memo": { "type": "string" }
+      },
+      "required": ["userId", "type", "amount", "status", "createdAt", "memo"]
+    },
+    "SystemStats": {
+      "title": "System Stats",
+      "description": "Global platform reserves and taxes",
+      "type": "object",
+      "properties": {
+        "companyReserve": { "type": "number" },
+        "totalTaxCollected": { "type": "number" }
+      },
+      "required": ["companyReserve", "totalTaxCollected"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of all users in the system"
+    },
+    "shares/{shareId}": {
+      "schema": { "$ref": "#/entities/ShareInvestment" },
+      "description": "All investments made by users"
+    },
+    "transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Financial ledger for all user operations"
+    },
+    "stats/global": {
+      "schema": { "$ref": "#/entities/SystemStats" },
+      "description": "Singleton document containing global financial stats"
+    }
+  }
+}

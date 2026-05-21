@@ -4,6 +4,16 @@ import LandingPage from './pages/Landing';
 import AuthPage from './pages/Auth';
 import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/Admin';
+import { auth, db, logoutUser } from './lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from './lib/firestore-errors';
+
+import TransactionsPage from './pages/Transactions';
+import ReferralsPage from './pages/Referrals';
+import ProfilePage from './pages/Profile';
+import { Chatbot } from './components/Chatbot';
+import { TwoFactorVerify } from './components/TwoFactorVerify';
 
 interface User {
   id: string;
@@ -13,6 +23,14 @@ interface User {
   balance: number;
   totalEarnings: number;
   referralCode: string;
+  twoFactorEnabled?: boolean;
+  twoFactorType?: 'TOTP' | 'SMS';
+  twoFactorSecret?: string;
+  twoFactorPhone?: string;
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  bankLinked?: boolean;
 }
 
 interface AuthContextType {
@@ -32,60 +50,123 @@ export const useAuth = () => {
 };
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isTfaVerified, setIsTfaVerified] = useState<boolean>(false);
 
-  const refreshUser = async () => {
-    if (!token) return;
-    try {
-      const res = await fetch('/api/user/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
+  useEffect(() => {
+    if (user) {
+      if (user.twoFactorEnabled) {
+        setIsTfaVerified(sessionStorage.getItem(`tfa_verified_${user.id}`) === 'true');
       } else {
-        logout();
+        setIsTfaVerified(true);
+      }
+    } else {
+      setIsTfaVerified(false);
+    }
+  }, [user]);
+
+  const refreshUser = async (uid: string) => {
+    try {
+      const docRef = doc(db, 'users', uid);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        setUser({ id: snap.id, ...snap.data() } as User);
+      } else {
+        setUser(null);
       }
     } catch (err) {
-      console.error(err);
+      handleFirestoreError(err, OperationType.GET, 'users');
     }
   };
 
   useEffect(() => {
-    if (token) {
-      refreshUser().finally(() => setLoading(false));
-    } else {
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        setToken(firebaseUser.uid);
+        await refreshUser(firebaseUser.uid);
+      } else {
+        setToken(null);
+        setUser(null);
+      }
       setLoading(false);
-    }
-  }, [token]);
+    });
+    return unsub;
+  }, []);
 
   const login = (tokenArg: string, userArg: User) => {
-    localStorage.setItem('token', tokenArg);
     setToken(tokenArg);
     setUser(userArg);
+    if (userArg.twoFactorEnabled) {
+      setIsTfaVerified(sessionStorage.getItem(`tfa_verified_${userArg.id}`) === 'true');
+    } else {
+      setIsTfaVerified(true);
+    }
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
+    if (user) {
+      sessionStorage.removeItem(`tfa_verified_${user.id}`);
+    }
+    logoutUser();
     setToken(null);
     setUser(null);
+    setIsTfaVerified(false);
   };
+
+  useEffect(() => {
+    let inactivityTimer: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(inactivityTimer);
+      if (token) {
+        inactivityTimer = setTimeout(() => {
+          logout();
+        }, 5 * 60 * 1000); // 5 minutes
+      }
+    };
+
+    if (token) {
+      resetTimer();
+      const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+      events.forEach(event => document.addEventListener(event, resetTimer));
+
+      return () => {
+        clearTimeout(inactivityTimer);
+        events.forEach(event => document.removeEventListener(event, resetTimer));
+      };
+    }
+  }, [token]);
 
   if (loading) {
     return <div className="min-h-screen bg-[#020617] flex items-center justify-center text-amber-500 font-bold uppercase tracking-widest text-xs">Loading...</div>;
   }
 
+  if (token && user && !isTfaVerified) {
+    return (
+      <AuthContext.Provider value={{ token, user, login, logout, refreshUser: () => refreshUser(token!) }}>
+        <TwoFactorVerify onVerified={() => {
+          sessionStorage.setItem(`tfa_verified_${user.id}`, 'true');
+          setIsTfaVerified(true);
+        }} />
+      </AuthContext.Provider>
+    );
+  }
+
   return (
-    <AuthContext.Provider value={{ token, user, login, logout, refreshUser }}>
+    <AuthContext.Provider value={{ token, user, login, logout, refreshUser: () => refreshUser(token!) }}>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<LandingPage />} />
-          <Route path="/auth" element={!token ? <AuthPage /> : <Navigate to="/dashboard" />} />
-          <Route path="/dashboard" element={token && user?.role === 'USER' ? <Dashboard /> : <Navigate to="/auth" />} />
-          <Route path="/admin" element={token && user?.role === 'ADMIN' ? <AdminDashboard /> : <Navigate to="/auth" />} />
+          <Route path="/auth" element={(!token || !user) ? <AuthPage /> : (user?.role === 'ADMIN' ? <Navigate to="/admin" /> : <Navigate to="/dashboard" />)} />
+          <Route path="/dashboard" element={token && user?.role === 'USER' ? <Dashboard /> : (user?.role === 'ADMIN' ? <Navigate to="/admin" /> : <Navigate to="/auth" />)} />
+          <Route path="/admin" element={token && user?.role === 'ADMIN' ? <AdminDashboard /> : (token ? <Navigate to="/dashboard" /> : <Navigate to="/auth" />)} />
+          <Route path="/transactions" element={token && user?.role === 'USER' ? <TransactionsPage /> : (user?.role === 'ADMIN' ? <Navigate to="/admin" /> : <Navigate to="/auth" />)} />
+          <Route path="/referrals" element={token && user?.role === 'USER' ? <ReferralsPage /> : (user?.role === 'ADMIN' ? <Navigate to="/admin" /> : <Navigate to="/auth" />)} />
+          <Route path="/profile" element={token && user?.role === 'USER' ? <ProfilePage /> : (user?.role === 'ADMIN' ? <Navigate to="/admin" /> : <Navigate to="/auth" />)} />
         </Routes>
+        {token && user?.role === 'USER' && <Chatbot />}
       </BrowserRouter>
     </AuthContext.Provider>
   );
